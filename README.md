@@ -101,7 +101,7 @@ Las siglas de laboratorio no son “variables de Python”. Son mediciones de si
 - **Cluster**: región geográfica que arma K-means. No significa “agua buena” ni “agua mala”.
 - **k**: cuántas regiones se piden. Se elige con el codo; no es la Y del problema.
 - **Centroide**: punto “centro” de una región (promedio de lat/lon de sus sitios).
-- **Inercia**: qué tan apretados quedaron los sitios alrededor de su centro. Baja al subir `k`; se busca el **codo** (donde deja de bajar fuerte). No son kilómetros: lat/lon van escaladas.
+- **Inercia**: qué tan apretados quedaron los sitios alrededor de su centro. Baja al subir `k`; se busca el **codo** (donde deja de bajar fuerte). No son kilómetros: latitud y longitud entran en grados, sin escalar, así que la inercia queda en grados al cuadrado.
 - **Silueta**: de −1 a 1. Cerca de 1 = el sitio está nítido en su región; cerca de 0 = frontera; negativo = mejor encajaría en otra. Se reporta; el mapa usa el `k` del codo.
 
 ---
@@ -175,7 +175,7 @@ Se cuenta `isna().sum()` por columna. Se muestran solo las que tienen al menos u
 
 ### 3.3 Filas que no son un sitio
 
-Se eliminan registros sin `CLAVE` o con `CLAVE` vacía (filas en blanco al final del CSV).
+Se eliminan registros sin `CLAVE` o con `CLAVE` vacía (filas en blanco al final del CSV). El archivo original tiene 4,141 filas y 55 columnas. Esas filas vacías son 648. El análisis queda con 3,493 sitios que sí tienen coordenadas.
 
 ### 3.4 Datos mal escritos y sustitución (datos censurados)
 
@@ -185,7 +185,7 @@ Las columnas de laboratorio mezclan texto y número: `6`, `4.26`, `<2`, `ND`. La
 |---|---|---|---|
 | `ND` o celda vacía | `NaN` | No imputar | No se midió. No se inventa un número. |
 | `<2`, `<10`, `<3` | LD / 2 | Sustitución LOD/2 (censura izquierda) | Convención de EDA. No es la medición real. |
-| `>100` | El número del límite | Sustitución por el límite (censura derecha) | Permite EDA. Se pierde que era mayor que. |
+| `>100` | El número del límite | Sustitución por el límite (censura derecha) | Permite EDA. Se pierde que el valor era mayor que el límite. |
 | `6`, `4.26` | Se deja como `float` | Conversión numérica | Ya es una medición. |
 
 Ejemplo: en `DBO_mg/L`, `<2` pasa a `1.0`. Un `4.26` se queda. LOD/2 (límite de detección entre 2) **no** se aplica a toda la base: solo a celdas de `COLS_LAB` que empiezan con `<`. Semáforo, estado y `CUMPLE_CON_*` no se convierten así. Lat/lon solo se pasan a `float`.
@@ -225,7 +225,7 @@ El laboratorio lista cuatro formas de tratar nulos. No se usan las cuatro.
 | Imputar con media / mediana / constante | Solo en el Pipeline de calidad | Mediana + `MinMaxScaler`. Esa matriz **no** entra a K-means. |
 | Imputar y agregar columna flag | No | El enunciado no lo pide. |
 
-Lat/lon se escalan aparte con MinMax **sin imputar**, para que un eje no domine. La inercia **no** son kilómetros.
+Latitud y longitud **no** se escalan y **no** se imputan. `MinMaxScaler` se usa solo en el Pipeline de calidad (junto con la mediana y, en las variables sesgadas, la raíz cuadrada). Esa matriz queda en 3,493 filas por 8 columnas, sin NaN, y no entra a K-means. La inercia del agrupamiento **no** son kilómetros: las coordenadas van en grados.
 
 Se copia el patrón del Lab 1. Se cambia la herramienta: el lab predice un número; este proyecto agrupa por ubicación y compara calidad.
 
@@ -237,28 +237,34 @@ La calidad **no** entra a K-means. Si el semáforo o el DBO (demanda bioquímica
 
 ### 6.1 Paso 1. Agrupar solo por ubicación
 
-K-means recibe únicamente `LONGITUD` y `LATITUD` escaladas. Se prueban k = 2 a 10. El *k* del mapa se elige por el **codo**; se reporta silueta. *k* = 3 es solo comparación: tres colores no implican tres regiones.
+K-means recibe únicamente `LONGITUD` y `LATITUD` en grados, sin escalar. Se prueban k = 2 a 12. El *k* del mapa se elige por el **codo** de la inercia: k = 4. La silueta más alta es k = 2 (0.503), pero parte el país en dos regiones demasiado amplias. Con k = 4 la silueta es 0.410 (separación moderada). Las regiones se nombran Noroeste, Occidente-Norte, Centro-Golfo y Sur-Península.
 
-Resultado: etiqueta `cluster` y centroides. Cada cluster es una **región**, no agua buena/mala.
+Resultado: etiqueta `cluster` y centroides. Cada cluster es una **región**, no una etiqueta de agua buena o mala.
 
 ### 6.2 Paso 2. Validar con el semáforo
 
-`crosstab(cluster, SEMAFORO)` en conteos y en % dentro de cada cluster.
+`crosstab(cluster, SEMAFORO)` en conteos y en % dentro de cada cluster. Verde más rojo no suma 100 %: el resto es amarillo.
 
-| Lo que se observa | Interpretación |
-|---|---|
-| Un cluster muy rojo y otro muy verde | Hay patrón geográfico de calidad. |
-| Porcentajes parecidos en todos los clusters | La calidad no se explica solo con lat/lon. |
+| Región | Verde | Rojo |
+|---|---|---|
+| Noroeste | 59.3 % | 18.0 % |
+| Occidente-Norte | 26.5 % | 30.2 % |
+| Centro-Golfo | 24.6 % | 43.8 % |
+| Sur-Península | 59.4 % | 15.7 % |
 
-Son **diferencias observadas**, no una prueba estadística ni un umbral fijo.
+Centro-Golfo concentra la mayor proporción de sitios rojos: cerca del 40 % de los sitios monitoreados y el 56 % de los semáforos rojos del país. Noroeste y Sur-Península son las regiones más verdes.
 
-Dos mapas de los mismos puntos: uno por cluster (ubicación) y otro por semáforo (calidad). Si se parecen, van juntas; si el semáforo está salpicado, lat/lon no bastan.
+Una prueba de independencia dio chi-cuadrado con 6 grados de libertad = 452.5, p < 0.001 y V de Cramér = 0.255. Hay asociación entre región y semáforo, pero es baja a moderada: la ubicación se relaciona con la calidad observada y no la determina sola.
+
+Dos mapas de los mismos puntos: el contorno de cada clúster y el color del semáforo de cada sitio. Dentro de una misma región conviven verdes, amarillos y rojos, aunque las proporciones cambian de una región a otra.
 
 ---
 
 ## 7. Cierre
 
-Se ajustó K-means para agrupar por coordenadas. **No** se entrenó un predictor. La relación calidadubicación se obtiene **después**, al cruzar cada región con el semáforo.
+Se ajustó K-means para agrupar por coordenadas, sin escalarlas. **No** se entrenó un predictor. La relación calidad–ubicación se obtiene **después**, al cruzar cada región con el semáforo.
+
+En los 3,493 sitios de 2020 esa relación sí aparece: los porcentajes de verde y rojo cambian entre las cuatro regiones y la prueba de chi-cuadrado la respalda. La V de Cramér (0.255) dice que la asociación es limitada. El resultado es observacional. No demuestra causa, no cubre todos los cuerpos de agua de México y no permite decir si el agua se puede beber ni dónde vivir.
 
 > K-means no clasifica calidad; clasifica sitios por coordenadas. Después comparamos el semáforo dentro de cada región. Si los porcentajes de verde y rojo cambian entre clusters, la calidad está ligada a la ubicación. Si no cambian, latitud y longitud no bastan para explicar la calidad del agua.
 
@@ -272,6 +278,8 @@ El CSV original permanece intacto. Las mediciones de laboratorio quedaron numér
 |---|---|
 | `DataSets/` | CSV de sitios y escalas CONAGUA 2020 |
 | `solucion_proyecto_final/proyectofinal.py` | Script local (gráficas en `graficas/`) |
-| `solucion_proyecto_final/Proyecto_Final_Aguas_Superficiales_Colab.ipynb` | Notebook para Google Colab |
+| `solucion_proyecto_final/Solucion_final/cd_final_proyecto_v23.ipynb` | Notebook de trabajo usado para estos resultados |
+| `decisiones _grupo/bitacora_reunion_revision_final_27_septiembre_2026.docx` | Sugerencias de decisión del grupo (títulos, EDA, SUBTIPO, k y conclusión). No están cerradas. |
 | `decisiones _grupo/Informe_decisiones_proyecto_final.docx` | Este mismo informe en Word |
 | `decisiones _grupo/decisiones _limpieza_datos.docx` | Bitácora corta de limpieza |
+| `Proyecto_final_Aguas_superficiales_CONAGUA_2020.docx` | Entrega: portada, reporte y enlace al notebook |
